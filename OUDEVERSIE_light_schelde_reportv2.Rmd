@@ -1,0 +1,471 @@
+---
+title: "Factors determining light extinction in the Schelde"
+author: "Willem Stolte"
+date: "October 7, 2015"
+output:
+html_document:
+fig_width: 7
+fig_height: 6
+bibliography: bib/latest_export.bib
+---
+
+```{r load_packages_and_data, include=FALSE}
+require(leaps)
+require(pander)
+require(GGally)
+require(ggplot2)
+require(reshape2)
+require(stargazer)
+require(plyr)
+require(sp)
+require(leaflet)
+require(shiny)
+require(rworldmap)
+require(scales)
+require(dplyr)
+require(car)
+load("DATA/alldata.Rdata")
+# subdata <- alldata %>% filter(variable %in% c("SPM", "E", "Secchidepth", "Chlfa", "POC", "DOC", "Salinity"))
+subdata <- subset(alldata, alldata$variable %in% c("SPM", "E", "Secchidepth", "Chlfa", "POC", "DOC", "Salinity") & 
+                    alldata$lat < 51.45) #select parameters, and exclude Oosterschelde stations
+subdata <- subset(subdata, subdata$value < 35 | subdata$variable != "Salinity") #only salinity < 35
+
+subdata$date <- as.Date(format(subdata$datetime, "%Y-%m-%d"))
+subdata$year <- format(subdata$datetime, "%Y")
+subwide <- dcast(data = subdata, Station_name + lat + long + date + bron ~ variable, value.var = "value", mean)
+# require(readr)
+# write_csv(subwide, "DATA/subwide.csv")
+counts <- dcast(data = subdata, Station_name + lat + long +bron ~ variable, value.var = "value", length)
+```
+
+# Introduction
+
+For modelling of primary production, correct estimation of underwater light climate is essential. Different models exist to explain the underwater light climate. Important factors explaining the attenuation of light in surface waters are (Colloidal) Dissolved Organic Matter ((C)DOM) and Suspended Particulate Matter (SPM). SPM containes inorganic particles and organic particles, mainly phytoplankton. The measured parameters describing these fractions are SPM, DOC, POC, and Chlorophyll-a. The apparent optical property of the water, attenuation, can be measured as attenuation coefficient $K_d_$ or Extinction coefficient $E$ (in m^-1^). 
+
+![Main components contributing to water optics](www/RelationOpticalParameters.jpg)
+
+Fig. *Main components contributing to water optics* [@Thijs2014].
+
+The extinction coefficient is determined by measuring downward radiation as function of depth. $E$ is then determined according to the Lambert-Beer equation:
+
+$I_d = I_0*e^{-E*d}$    (equation 1)  
+
+where $I_d$ is the irradiance at depth $d$, $I_0$ is the irradiance just below the surface and $E$ is the extinction coefficient. 
+
+In this study, we aim to empirically explain the observed $E$ using measured parameters from the same station and time as where $E$ was measured. In the literature, different models are used to explain $E$. The general form is:
+
+$E = a + b*SPM + c*DOC + d*POC + e*SAL + f*CHLFA$  
+
+This equation is used for all stations where $E$ has been measured directly by analysing the attenuation of light with depth. Additionally, for some stations, an approximation of $E$ can be obtained through the Secchi Depth, which is measured more frequently than E. The relation between $E$ and the Seccidepth is analysed in this study. 
+
+# Methodology
+
+To explain $E$ by other variables, a multiple regression analysis was performed using R (version 3.2.2). The analysis has been done with different numbers of explaining variables. For each number of explaining variables, the best fitting variables were obtained using a leaps-and-bounds search ([Alan Miller, "Subset Selection in Regression" Chapman & Hall, 2002, 256 pp.](https://books.google.nl/books?id=V-vLBQAAQBAJ&lpg=PP1&hl=nl&pg=PP1#v=onepage&q&f=false)). This test was performed using the "leaps" [package](https://cran.r-project.org/web/packages/leaps/). 
+
+## Data sources
+
+### Rijkswaterstaat Waterbase
+
+A subset of the Rijkswaterstaat database "DONAR" is available via a webservice (REST), [Waterbase](http://live.waterbase.nl). The subset exists of quality-approved surface water observations for the most common parameters measured at the surface. All stations associated with the Schelde were chosen for data download. Likely, more observations for depths > 1 m are additionally available from DONAR. Here, we judge that for the light climate affecting algal growth, surface concentrations are sufficient. Also, values for $E$, although in Waterbase, originate from irradiance measurements over the vertical. 
+
+### Scheldemonitor data
+
+The ["Scheldemonitor"](http://www.scheldemonitor.nl) website is a portal to many different environmental datasets concerning the Schelde. Not all data are freely available, some are restricted to registered users. The Deltares registration has been used to harvest data from this website. Since DONAR data were obtained separately from Waterbase, only other than DONAR data were obtained from the Scheldemonitor. 
+
+## Data overview
+
+The following parameters relevenant for the light climate were obtained from Waterbase and Scheldemonitor, and mapped to a common variable (column: "mapped to")
+```{r parameter_availability, echo = F, results = 'asis'}
+vl <- dcast(subdata, Paramname + variable + bron ~ ., length, value.var = "value")
+colnames(vl) <-c("parameter name", "mapped to", "bron", "# obs")
+# panderOptions("table.style", "rmarkdown")
+# panderOptions("graph.fontsize", "9")  # Used in conjunction with the chunk setting results='asis'
+# panderOptions("table.alignment.default", "left")
+# pander(vl,  split.table = Inf)
+
+# alternative table (looks the same to me...)
+knitr::kable(vl)
+```
+
+## Data availability per parameter and station
+
+```{r data_availability, echo = F, fig.width = 12, fig.height = 4}
+peryear <- dcast(subdata, Station_name + variable + year ~ ., value.var = "value", length)
+# peryear2 <- dcast(peryear, Station_name + year ~ variable)
+q <- ggplot(aes(Station_name, variable), data = peryear)
+q + geom_tile(aes(fill = log10(.))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text = element_text(size = 8)) +
+  scale_fill_gradient(low="white", high="black")
+```
+
+
+```{r stationsparameters, echo = F, eval=F}
+# missing values plot if necessary
+# require(VIM)
+# matrixplot(subwide[c(4,6:12)], sortby = "date")
+counts2 <- dcast(data = subdata, Station_name + lat + long + datetime +bron ~ variable, value.var = "value", length)
+counts2$id <- paste(counts2$datetime,counts2$Station_name)
+counts2m <- melt(counts2[c(1:9,11,12)], id.vars = c("datetime", "Station_name"), measure.vars = c( "Chlfa","DOC","E","POC","Secchidepth","SPM"), na.rm = T)
+counts2m <- counts2m[!is.na(counts2m),]
+counts2m <- counts2m[!is.na(counts2m$variable),]
+counts2m <- counts2m[(counts2m$value>0),]
+
+counts2m$id <- paste(counts2m$datetime,counts2m$Station_name)
+
+pl <- ggplot(counts2m, aes(x=id, y=variable))
+pl + geom_point(aes(size = log(value), group = 1), shape = "|") + 
+  scale_size_continuous(range = c(1,20)) +
+  theme(axis.text.x = element_blank(),
+        axis.title = element_blank(),
+        # axis.line = element_blank(),
+        axis.ticks = element_blank()
+  )
+```
+
+
+```{r stationsparameters2, echo = F, eval=F}
+pl <- ggplot(counts2m, aes(x=Station_name, y=variable))
+pl + geom_point(aes(size = log(value), group = 1), shape = "|") + 
+  scale_size_continuous(range = c(1,20)) +
+  theme(
+    # axis.text.x = element_blank(),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    axis.title = element_blank(),
+    # axis.line = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+
+```
+
+#Geographical positions of all stations
+On the map, all stations included in the analysis are presented. However, the parameter availability for all stations differs (see table).
+
+Map with location of observations of Extinction coefficient (E). The size of the dot is representative for the total number of observations of E at that particular station
+
+```{r plot_map_E, echo = F, message = F, warning = F}
+# locations <- ddply(counts, .(long, lat, Station_name, bron, E, Secchidepth, SPM, Chlfa, DOC, Salinity, POC), summarize, length)
+counts <- counts[!is.na(counts$long),]
+counts <- counts[(counts$long > 0),]
+counts <- counts[(counts$E > 0),]
+
+###======= Plot static map for documents ===============
+# data("countriesLow")
+# world <- fortify(countriesLow)
+# map <- ggplot() + geom_polygon(data = world, 
+#                                aes(x=long, y=lat, group=group), 
+#                                color = "lightgrey", fill = "darkgrey")
+# xxlim <- expand_range(c(min(counts$long),max(counts$long)), add = 0.1)
+# yylim <- expand_range(c(min(counts$lat),max(counts$lat)), add = 0.1)
+# map +
+#   coord_map("ortho", xlim = xxlim, ylim = yylim, orientation=c(55, 10, 0)) +
+#   geom_point(data = counts,
+#              aes(long, lat, size = E, color = bron), shape = 16) +
+#   scale_size(range = c(2, 20)) +
+#   ggtitle(paste("")) +
+#   theme(axis.text = element_blank(),
+#         axis.title = element_blank(),
+#         axis.line = element_blank(),
+#         axis.ticks = element_blank())
+# 
+
+require(ggmap)
+qmap('Terneuzen', zoom = 9) +
+  geom_point(data = counts,
+             aes(long, lat, size = log10(E), color = bron))#, shape = 16)
+
+```
+
+
+#Analysis
+
+## Which (combination of) variables explain Extinction Coefficient ($E$) best?
+
+The combination of parameters for the multiple regression analysis was determined by two ways. A visual inspection using a scatterplot matrix (SPLOM), and a more formal method (leaps and bounds). For different numbers of explaining variables, the best model was selected and the coefficients and performance ($r^2$) of the different models were compared. 
+
+## Scatterplot matrix
+A scatterplot matrix is a visual inspection of the apparent pairwise correlation between variables. In this particular plot, variables that are more correlated group together. Therefore, E correlates best with SPM, then with DOC, Salinity, and least with Chlfa. Furthermore, DOC and Salinity were highly correlated, and can therefore not be used together as explaining variables. Also, SPM and POC are hightly correlated, and it can therefore be questioned whether these two variables can be used together in multiple regression. 
+
+```{r splom_E, echo=FALSE, fig.width=8, fig.height = 8, warning = F, message = F}
+dat_norm <- subwide
+dat_norm <- subwide[!is.na(subwide$E),]
+dat_norm <- dat_norm[!is.na(dat_norm$Chlfa),]
+dat_norm <- dat_norm[!is.na(dat_norm$DOC),]
+dat_norm <- dat_norm[!is.na(dat_norm$POC),]
+dat_norm <- dat_norm[!is.na(dat_norm$Secchidepth),]
+dat_norm <- dat_norm[!is.na(dat_norm$SPM),]
+dat_norm <- dat_norm[!is.na(dat_norm$Salinity),]
+
+# plot(dat_norm[6:12], cex = 0.7) # simple scatterplot
+
+require(gclus)
+dta <- dat_norm[6:12]
+dta.r <- abs(cor(dta)) # get correlations
+dta.col <- dmat.color(dta.r) # get colors
+# reorder variables so those with highest correlation
+# are closest to the diagonal
+dta.o <- order.single(dta.r)
+cpairs(dta, dta.o, panel.colors=dta.col, gap=.5,
+       main="Variables Ordered and Colored by Correlation", pch = ".", cex = 3 ) 
+```
+
+
+##Leaps test for determination of best combination of explaining variables
+
+A more formal test of which variable(s) explain best the Extinction Coefficient is a so-called leaps-and-bounds search ([Alan Miller "Subset Selection in Regression" Chapman & Hall](https://books.google.nl/books?hl=nl&lr=&id=V-vLBQAAQBAJ&oi=fnd&pg=PR7&dq=Alan+Miller+%22Subset+Selection+in+Regression%22+Chapman+\%26+Hall&ots=jRAO_p-0Rv&sig=4owJvsly1Se6c1y2C_sZ8FeAYMc#v=onepage&q=leaps&f=false)). This test was performed using the "leaps" [package](https://cran.r-project.org/web/packages/leaps/). The outcome is presented in the following table. The table presents the best model elements explaining Extinction coefficient with 1 to 5 explaining variables. In the table, the models are ordered by the goodness-of-fit within each group based on the number of variables used.  
+
+```{r, echo = F, results = "asis"}
+attach(dat_norm)
+leaps<-regsubsets(E ~ SPM + DOC + Salinity + POC + Chlfa, dat_norm, nbest=10)
+# view results
+s <- summary(leaps)
+# plot a table of models showing variables in each model.
+# models are ordered by the selection statistic.
+# pandoc.table(s$outmat, style = "simple", graph.fontsize = 9)
+d <- data.frame(s$outmat); colnames(d) <- paste(colnames(d), "  .")
+stargazer(d, summary = F, type = "html")
+
+```
+
+
+The conclusion from this analysis is that the variables that are most suitable for multiple regression are:
+
+* SPM (1 variable)
+
+* SPM + DOC (2 variables)
+
+* SPM + DOC + POC (3 variables)
+
+* SPM + DOC + POC + Chlfa (4 variables)
+
+The effect of the chosen model variables on the goodness of fit ($r^2$) as a function of number of parameters can also be represented graphically. The following graph presents the goodness of fit as a function of subset size (number of used variables). It appears that the $r^2$ does not improve much by using more than 1 or 2 variables. Also, it is clear that the different options give almost equally good results when using 2 - 4 variables. 
+```{r, echo = F, fig.height = 6}
+library(car)
+subsets(leaps, statistic="rsq", legend = F) 
+```
+
+
+##Comparison between models using different numbers of explaining variables. 
+From the section analysis, the folowing models were chosen for comparison of coefficients and $r^2$. 
+```{r, results = "asis"}
+m1 <- lm(E ~ SPM, data = dat_norm)
+m2 <- lm(E ~ SPM + DOC, data = dat_norm)
+m2a <- lm(E ~ SPM + Salinity, data = dat_norm)
+m3 <- lm(E ~ SPM + DOC + POC, data = dat_norm)
+m3a <- lm(E ~ SPM + Salinity + POC, data = dat_norm)
+m4 <- lm(E ~ SPM + DOC + POC + Chlfa, data = dat_norm)
+m4a <- lm(E ~ SPM + Salinity + POC + Chlfa, data = dat_norm)
+```
+
+The results of the multiple regression using the above models can be summarized accordingly:
+```{r, echo = F, results = "asis"}
+stargazer(m1, m2, m2a, m3, m3a, m4, m4a, type="html",
+          omit.stat = c("ser", "f"),
+          column.labels = c("m1","m2","m2a","m3","m3a","m4","m4a"),
+          dep.var.labels=c("E"), 
+          column.sep.width = "20pt",
+          covariate.labels=c("SPM","DOC", "Salinity", "POC","Chlfa"))
+```
+
+# Which variables explain Secchidepth best?
+
+Secchidepth is measured more often than extinction coefficient. More data can therefore be used when an approximation of light extinction is used based on Secchidepth. To convert Secchidepth values to $E$, the correlation between the two was analysed for the Schelde dataset. 
+
+## Relationship bewtween Extinction Coefficient ($E$) and Secchidepth
+
+Observations of $E$ are less frequent than observations of Secchidepth. It is therefore worthwile to investigate whether Secchidepth can be used as a proxy for $E$. In the literature, different relationships are mentioned. The most used relationship is the Poole-Atkins relationship ($E = 1.7/z_{SD}$) (Cole, 1975), originally derived for ocean waters. French et al. (1982) found a lower coefficient ($1.2$) in fresh water. Moreover, they derived a different equation, which more accurately described the relationeship 
+
+$E = c/{z_{SD}}^b$  
+
+or  
+
+$ln(E)=b*ln(z_{SD}) + ln(c)$  
+
+Using the Schelde data on this relationship, we found a significant fit and the following coefficients
+
+```{r, echo = F, results = "asis"}
+## filter out NA, negative, or 0 values
+dat_norm <- subwide[subwide$Secchidepth != 0,]
+dat_norm <- dat_norm[dat_norm$E > 0,]
+dat_norm <- dat_norm[!is.na(dat_norm$E),]
+dat_norm <- dat_norm[!is.na(dat_norm$Secchidepth),]
+
+md2 <- lm(log(E) ~ log(Secchidepth/10), data = dat_norm)
+
+stargazer(md2, type="html", 
+          dep.var.labels=c("log(E)"), 
+          covariate.labels=c("log(Secchidepth)"))
+
+
+```
+
+
+Fig. ## Relationship between Extinction coefficient ($E$) and Secchidepth $z_{SD}$ in the Schelde. Salinity is indicated by color. white dots mean that no salinity value is available.
+
+```{r, echo = F, fig.width=6, fig.height=3, warning = F}
+# subwide$turbidity <- 1/subwide$Secchidepth
+# 
+p <- ggplot(data = dat_norm, aes(log(Secchidepth/10), log(E)))
+p + geom_jitter(aes(color = Salinity), alpha = 1, size = 2) +
+  geom_smooth(method = "lm" ) +
+  scale_color_continuous(low = "orange", high = "purple", guide = "colourbar")# +
+#  scale_x_log10() + scale_y_log10()
+
+```
+
+The values of the coefficients are specific for this set of observations and are hard to generalize. For instance, based on UK coastal data (Devlin et al, 2008), the relationship between $E$ and Secchidepth was found to be:  
+$ln(E) =  0.253-1.029*ln(SD)$ for transitional waters and  
+$ln(E) = -0.010-0.861*ln(SD)$ for coastal offshore waters. 
+
+For this study, $z_{SD}$ observations were transformed to $E$ using the obtained coefficients
+
+
+```{r, result = "asis"}
+subwide$ESD <- exp(-.723*log(subwide$Secchidepth/10) + 0.308)
+```
+
+
+For the stations where both $E$ and $z_{SD}$ are available, the transformed $E$ ($ESD$) is related to $E$ according to the next figure (blue line is 1:1 relationship:
+```{r, echo = F}
+z <- ggplot(aes(E, ESD), data = subwide)
+z + geom_point() + 
+  # geom_smooth(method = "lm" ) + 
+  geom_abline(intercept = 0, slope = 1, size = 1, color = "blue")
+
+```
+
+## Secchidepth data availability
+
+```{r}
+# map +
+#   coord_map("ortho", xlim = xxlim, ylim = yylim, orientation=c(55, 10, 0)) +
+qmap('Terneuzen', zoom = 9) +
+  geom_point(data = 
+               counts,
+             aes(long, lat, size = Secchidepth, color = bron), shape = 16) +
+  scale_size(range = c(2, 20)) +
+  ggtitle(paste("")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank())
+```
+
+## Analysis 
+
+Prior to the multiple regression, an analysis was done to find the best subsets of explaining variables
+
+The best parameter combination for different numbers of explaining variables was selected and the coefficients and performance ($r^2$) of the different models compared. 
+
+The range of Secchi depth is (`r range(subwide$Secchidepth, na.rm = T)`)
+The range of converted turbidity is (`r round(range(subwide$turbidity, na.rm = T),2)`)
+
+## Explore some data
+
+```{r, echo = F, warning = F}
+p <- ggplot(data = subwide, aes(SPM, ESD))
+p + geom_point(aes(color = bron), alpha = 0.5, size = 2) +
+  scale_x_log10() + scale_y_log10()
+
+p <- ggplot(data = subwide, aes(DOC, ESD))
+p + geom_point(aes(color = bron), alpha = 0.5, size = 2) +
+  scale_x_log10() + scale_y_log10()
+
+p <- ggplot(data = subwide, aes(Chlfa, ESD))
+p + geom_point(aes(color = bron), alpha = 0.5, size = 2) +
+  scale_x_log10() + scale_y_log10()
+
+p <- ggplot(data = subwide, aes(POC, ESD))
+p + geom_point(aes(color = bron), alpha = 0.5, size = 2) +
+  scale_x_log10() + scale_y_log10()
+
+```
+
+
+## Scatterplot matrix
+A scatterplot matrix is a visual inspection of the apparent pairwise correlation between variables. In the right top part of the graph, the correlation coefficients are shown. turbidity correlates best with SPM, then with DOC, Salinity, and least with Chlfa. Furthermore, DOC and Salinity are highly correlated.  
+
+```{r, echo=FALSE, fig.width=12, fig.height = 12, warning = F}
+
+dat_norm <- subwide
+dat_norm <- dat_norm[!is.infinite(dat_norm$ESD),]
+# dat_norm <- dat_norm[any(!is.na(dat_norm[6:13,])),] ## werkt nog steeds niet goed...
+# dan maar zo:
+dat_norm <- dat_norm[!is.na(dat_norm$E),]
+dat_norm <- dat_norm[!is.na(dat_norm$Chlfa),]
+dat_norm <- dat_norm[!is.na(dat_norm$DOC),]
+dat_norm <- dat_norm[!is.na(dat_norm$POC),]
+dat_norm <- dat_norm[!is.na(dat_norm$Secchidepth),]
+dat_norm <- dat_norm[!is.na(dat_norm$SPM),]
+dat_norm <- dat_norm[!is.na(dat_norm$Salinity),]
+
+summary(dat_norm)
+
+require(gclus)
+dta <- dat_norm[6:12]
+dta.r <- abs(cor(dta)) # get correlations
+dta.col <- dmat.color(dta.r) # get colors
+# reorder variables so those with highest correlation
+# are closest to the diagonal
+dta.o <- order.single(dta.r)
+cpairs(dta, dta.o, panel.colors=dta.col, gap=.5,
+       main="Variables Ordered and Colored by Correlation", pch = ".", cex = 2 ) 
+```
+
+
+##Leaps test for determination of best combination of explaining variables
+
+A more formal test of which variable(s) explain best the turbidity is a so-called leaps-and-bounds search ([Alan Miller "Subset Selection in Regression" Chapman & Hall](https://books.google.nl/books?hl=nl&lr=&id=V-vLBQAAQBAJ&oi=fnd&pg=PR7&dq=Alan+Miller+%22Subset+Selection+in+Regression%22+Chapman+\%26+Hall&ots=jRAO_p-0Rv&sig=4owJvsly1Se6c1y2C_sZ8FeAYMc#v=onepage&q=leaps&f=false)). This test was performed using the "leaps" [package](https://cran.r-project.org/web/packages/leaps/). The outcome is presented in the following table. The table presents the best model elements explaining turbidity with 1 to 5 explaining variables. In the table, the models are ordered by the goodness-of-fit within each group based on the number of variables used.  
+
+```{r, echo = F, results = "asis", results=F}
+attach(dat_norm)
+leaps<-regsubsets(ESD ~ SPM + DOC + Salinity + POC + Chlfa, dat_norm, nbest=10)
+# view results
+s <- summary(leaps)
+# pander(s[[7]],  split.table = Inf) ## tabel nog wat compacter maken
+e <- s$outmat; colnames(e <- paste(colnames(e), "  ."))
+stargazer(e, summary = F, type = "html")
+```
+
+The conclusion from this analysis is that the variables that are most suitable for multiple regression are:
+* SPM (1 variable)
+
+* SPM + DOC (2 variables)
+
+* SPM + DOC + Chlfa (3 variables)
+
+* SPM + DOC + Chlfa + POC (4 variables)
+
+The effect of the chosen model variables on the goodness of fit ($r^2$) as a function of number of parameters can also be represented graphically. The following graph presents the goodness of fit as a function of subset size (number of used variables). It is clear that the $r^2$ does not improve much by using more than 1 or 2 variables. Also, it is clear that multiple options give almost equally good results when using 2 - 4 variables. 
+```{r, echo = F, fig.height = 6}
+subsets(leaps, statistic="rsq", legend = F) 
+```
+
+
+##Comparison between models using different numbers of explaining variables. 
+From the section analysis, the folowing models were chosen for comparison of coefficients and $r^2$. 
+```{r, results = "asis"}
+#### databron moet vervangen worden door dat_norm om zelfde data te garanderen voor verschillende modellen
+m1 <- lm(ESD ~ SPM, data = dat_norm)
+m2 <- lm(ESD ~ SPM + DOC, data = dat_norm)
+m3 <- lm(ESD ~ SPM + DOC + Chlfa, data = dat_norm)
+m4 <- lm(ESD ~ SPM + DOC + Chlfa + POC, data = dat_norm)
+```
+
+The 
+```{r, echo = F, results = "asis"}
+stargazer(m1, m2, m3, m4, type="html", 
+          dep.var.labels=c("turbidity"), 
+          covariate.labels=c("SPM","DOC","Chlfa",
+                             "POC"))
+```
+
+
+
+#References
+Tatman, S., & Gils, J. Van. (2003). Light penetration in the water column. Delft.  
+French, R. H., Cooper, J. J., & Vig, S. (1982). Secchi disc relationships. Water Resources Bulletinesources Bulletin, 18(1), 121–123.  
+Holmes, R. W. (1970). The Secchi disk in turbid coastal waters. Limnology and Oceanography, 15(5), 688–694.
+Devlin, M. J. J., Barry, J., Mills, D. K. K., Gowen, R. J. J., Foden, J., Sivyer, D., & Tett, P. (2008).   Relationships between suspended particulate material, light attenuation and Secchi depth in UK marine waters. Estuarine, Coastal and Shelf Science, 79(3), 429–439. http://doi.org/10.1016/j.ecss.2008.04.024  
+
