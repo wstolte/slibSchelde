@@ -1,0 +1,6 @@
+"0","# make cross-table"
+"0","df_clean %>% "
+"0","  select(latitude, longitude, depth, datetime, parametername, stationname, value) %>%"
+"0","  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%"
+"0","  summarize(mean = mean(value, na.rm = T)) %>%"
+"0","  spread(key = parametername, value = mean)"

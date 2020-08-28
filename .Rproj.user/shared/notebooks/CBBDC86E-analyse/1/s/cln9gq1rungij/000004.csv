@@ -1,0 +1,17 @@
+"0","df <- read_csv(url, na = ""-"")
+"
+"2","Parsed with column specification:
+cols(
+  FID = [31mcol_character()[39m,
+  latitude = [32mcol_double()[39m,
+  longitude = [32mcol_double()[39m,
+  depth = [32mcol_double()[39m,
+  datetime = [34mcol_datetime(format = """")[39m,
+  value = [32mcol_double()[39m,
+  parametername = [31mcol_character()[39m,
+  dataprovider = [31mcol_character()[39m,
+  datasettitle = [31mcol_character()[39m,
+  stationname = [31mcol_character()[39m,
+  valuesign = [31mcol_character()[39m
+)
+"
