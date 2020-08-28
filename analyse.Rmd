@@ -115,7 +115,7 @@ Perhaps first aggregate parameters that can be aggregated?
 
 ```{r aggregate parameters}
 
-df %>% distinct(parametername, datasettitle)
+df %>% distinct(parametername)
 
 ```
 
@@ -130,9 +130,6 @@ Find parameters that were measured at the same time and location
 ```{r matchParameters}
 # make cross-table
 df_clean %>% 
-  select(latitude, longitude, depth, datetime, parametername, stationname, value) %>%
-  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
-  summarize(mean = mean(value, na.rm = T)) %>%
   spread(key = parametername, value = mean) %>%
   filter()
   
