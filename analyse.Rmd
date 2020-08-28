@@ -15,7 +15,7 @@ The Scheldemonitor was queried for parameters related to light extinction and su
 
 
 
-```{r leesDataUitScheldemonitor}
+```{r leesDataUitScheldemonitor, cache=T}
 url <- "http://geo.vliz.be/geoserver/wfs/ows?service=WFS&version=1.1.0&request=GetFeature&typeName=Dataportal%3Aabiotic_observations&resultType=results&viewParams=where%3Aobs.context+%26%26+ARRAY%5B1%5D+AND+standardparameterid+IN+%283240%5C%2C461%5C%2C1293%5C%2C495%5C%2C3289%5C%2C1223%29%3Bcontext%3A0001&propertyName=stationname%2Clongitude%2Clatitude%2Cdatetime%2Cdepth%2Cparametername%2Cvaluesign%2Cvalue%2Cdataprovider%2Cdatasettitle&outputFormat=csv"
 
 df <- read_csv(url, na = "-")
@@ -91,6 +91,15 @@ df_clean %>%
   summarize(n = n(), mean = mean(value, na.rm = T), sd = sd(value, na.rm = T)) %>%
   arrange(-n) %>% head(54)
 
+# Some sd values are very high compared to mean. Still, averaging is necessary to work with the data further
+
+# redefine df_clean without any duplicate measurements
+
+df_clean <- df[-duplicates,] %>%
+  select(latitude, longitude, depth, datetime, parametername, stationname, value) %>%
+  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
+  summarize(mean = mean(value, na.rm = T))
+
 ```
 
 
@@ -102,7 +111,20 @@ Perhaps take mean anyway? Other solutions?
 
 ## Find matching parameters
 
+Perhaps first aggregate parameters that can be aggregated?
+
+```{r aggregate parameters}
+
+df %>% distinct(parametername, datasettitle)
+
+```
+
+
+
+
 Find parameters that were measured at the same time and location
+
+
 
 
 ```{r matchParameters}
@@ -111,7 +133,8 @@ df_clean %>%
   select(latitude, longitude, depth, datetime, parametername, stationname, value) %>%
   group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
   summarize(mean = mean(value, na.rm = T)) %>%
-  spread(key = parametername, value = mean)
+  spread(key = parametername, value = mean) %>%
+  filter()
   
 
 ```
