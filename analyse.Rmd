@@ -3,137 +3,64 @@ title: "Licht-sediment relatie in de Schelde"
 output: html_notebook
 ---
 
-```{r}
+```{r setup}
 require(tidyverse)
 require(skimr)
 require(leaflet)
 ```
 
-## Data extraction
-
-The Scheldemonitor was queried for parameters related to light extinction and suspended sediment.
-
-
-
-```{r leesDataUitScheldemonitor, cache=T}
-url <- "http://geo.vliz.be/geoserver/wfs/ows?service=WFS&version=1.1.0&request=GetFeature&typeName=Dataportal%3Aabiotic_observations&resultType=results&viewParams=where%3Aobs.context+%26%26+ARRAY%5B1%5D+AND+standardparameterid+IN+%283240%5C%2C461%5C%2C1293%5C%2C495%5C%2C3289%5C%2C1223%29%3Bcontext%3A0001&propertyName=stationname%2Clongitude%2Clatitude%2Cdatetime%2Cdepth%2Cparametername%2Cvaluesign%2Cvalue%2Cdataprovider%2Cdatasettitle&outputFormat=csv"
-
-df <- read_csv(url, na = "-")
+```{r loadData}
+load(file = "ScheldeSlib.Rdata")
+# geladen als df_wide
 ```
 
-## Parameters
 
 ```{r}
-df %>% distinct(parametername, datasettitle)
+df_wide %>% 
+  gather("variable", "value", -latitude, -longitude, -depth, -datetime, -stationname, -dataprovider, -watersysteem, -Omessegmen) %>%
+  filter(variable != "E_/m" | value < 20) %>% 
+  filter(variable != "SPM_mg/l" | value < 500) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(aes(fill = dataprovider)) +
+  facet_wrap(~ variable, scales = "free") +
+  scale_x_log10() +
+  theme(legend.position = "bottom")
 ```
-
-### Spatial extent per dataset
 
 ```{r}
-
-pal = colorFactor(topo.colors(10), domain = as.factor(df$datasettitle))
-df %>% distinct(latitude, longitude, datasettitle) %>%
-  mutate(datasettitle = as.factor(datasettitle)) %>%
-  filter(latitude>0) %>%
-  leaflet() %>%
-  addTiles() %>%
-  addCircleMarkers(
-    stroke = F, fillOpacity = 1, fillColor =  ~pal(datasettitle),
-    label = ~datasettitle) #%>%
-  # addLegend("bottomright", pal = pal, values = ~datasettitle,
-    # title = "dataset",
-    # opacity = 1)
+df_wide %>% 
+  gather("variable", "value", -latitude, -longitude, -depth, -datetime, -stationname, -dataprovider, -watersysteem, -Omessegmen) %>%
+  filter(variable != "E_/m" | value < 20) %>% 
+  filter(variable != "SPM_mg/l" | value < 500) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(aes(fill = watersysteem)) +
+  facet_wrap(~ variable, scales = "free") +
+  scale_x_log10() +
+  theme(legend.position = "bottom")
 ```
 
-
-## Find duplicates
-
-Data may be reported twice to Scheldemonitor by different organizations. 
 
 ```{r}
-# duplicate rows?
-df %>% 
-  drop_na(value) %>%
-  duplicated() %>% which() %>% length()
-# no
-
-
-# duplicate measurements?
-df %>% 
-  drop_na(value) %>%
-  select(latitude, longitude, depth, datetime, parametername, stationname, value)  %>%
-  duplicated() %>% which() %>% length()
-# yes. 1
-
+df_wide %>%
+  filter(watersysteem == "Schelde") %>%
+ggplot(aes(`SPM_mg/l`, `E_/m`)) +
+  geom_point(aes(color = lubridate::year(datetime)), size = 1) +
+  geom_smooth(method = "lm") +
+  scale_x_log10() + scale_y_log10() +
+  coord_cartesian(xlim = c(5,500), ylim = c(0.5, 12))
 ```
 
-```{r remove duplicate measurements}
-duplicates <- df %>% 
-  select(latitude, longitude, depth, datetime, parametername, stationname, value)  %>%
-  duplicated() %>% which()
-df_clean <- df[-duplicates,]
-
-# There may be multiple values at same location and time
-df_clean %>% 
-  drop_na(value) %>%
-  select(latitude, longitude, depth, datetime, parametername, stationname)  %>%
-  duplicated() %>% which() %>% length()
-# yes, 54
-
-# See if we can average them
-dupliSamples <- df_clean %>% 
-  drop_na(value) %>%
-  select(latitude, longitude, depth, datetime, parametername, stationname)  %>%
-  duplicated() %>% which()
-
-df_clean %>%
-  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
-  summarize(n = n(), mean = mean(value, na.rm = T), sd = sd(value, na.rm = T)) %>%
-  arrange(-n) %>% head(54)
-
-# Some sd values are very high compared to mean. Still, averaging is necessary to work with the data further
-
-# redefine df_clean without any duplicate measurements
-
-df_clean <- df[-duplicates,] %>%
-  select(latitude, longitude, depth, datetime, parametername, stationname, value) %>%
-  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
-  summarize(mean = mean(value, na.rm = T))
-
+```{r}
+# `SPM_mg/l`, `E_/m`
+fit <- lm(`E_/m` ~ `SPM_mg/l` - 1, data = df)
+ggplot(data = df, aes(x = `SPM_mg/l`, y = `E_/m`, label=`E_/m`)) +
+  stat_function(fun = function(x) predict(fit, newdata = data.frame(x = x)),
+                color = "blue", size = 1.5) +
+  annotate(label = sprintf("y = %.3f x\nR² = %.2f", coef(fit), summary(fit)$r.squared),
+           geom = "text", x = 25, y = 400, size = 12) +
+  geom_point()
 ```
 
 
-There are some samples with very high sd as compared to the mean (n = 2). 
-
-Perhaps take mean anyway? Other solutions?
-
-
-
-## Find matching parameters
-
-Perhaps first aggregate parameters that can be aggregated?
-
-```{r aggregate parameters}
-
-df %>% distinct(parametername)
-
-```
-
-
-
-
-Find parameters that were measured at the same time and location
-
-
-
-
-```{r matchParameters}
-# make cross-table
-df_clean %>% 
-  spread(key = parametername, value = mean) %>%
-  filter()
-  
-
-```
 
 

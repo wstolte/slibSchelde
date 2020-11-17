@@ -1,0 +1,245 @@
+---
+title: "Licht-sediment relatie in de Schelde"
+output: html_notebook
+---
+
+```{r}
+require(tidyverse)
+require(skimr)
+require(leaflet)
+require(sf)
+```
+
+## Data extraction
+
+The Scheldemonitor was queried for parameters related to light extinction and suspended sediment.
+
+
+
+```{r leesDataUitScheldemonitor, cache=TRUE, include=FALSE}
+url <- "http://geo.vliz.be/geoserver/wfs/ows?service=WFS&version=1.1.0&request=GetFeature&typeName=Dataportal%3Aabiotic_observations&resultType=results&viewParams=where%3Aobs.context+%26%26+ARRAY%5B1%5D+AND+standardparameterid+IN+%283240%5C%2C461%5C%2C1293%5C%2C495%5C%2C3289%5C%2C1223%29%3Bcontext%3A0001&propertyName=stationname%2Clongitude%2Clatitude%2Cdatetime%2Cdepth%2Cparametername%2Cvaluesign%2Cvalue%2Cdataprovider%2Cdatasettitle&outputFormat=csv"
+
+# df <- read_csv(url, na = c("-"))
+# 
+# df %>% arrange(-value) %>% head(1) %>% select(value) %>% as.character()
+#
+# nog een keer
+df <- read_csv(url, na = c("-", "999999999999"))
+
+# check of hoogste waarde niet eigenlijk NA moet zijn
+df %>% arrange(-value) %>% head(1) %>% select(value) %>% as.character()
+# check for other indicators of NA
+df %>% filter(grepl("999", as.character(value))) %>% select(value) %>% as.character()
+
+```
+
+## Parameters
+
+```{r}
+df %>% distinct(parametername, datasettitle)
+```
+
+### Spatial extent per dataset
+
+```{r}
+
+pal = colorFactor(topo.colors(10), domain = as.factor(df$dataprovider))
+df %>% distinct(latitude, longitude, dataprovider) %>%
+  mutate(dataprovider = as.factor(dataprovider)) %>%
+  filter(latitude>0) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(
+    stroke = F, fillOpacity = 1, fillColor =  ~pal(dataprovider),
+    label = ~dataprovider) %>%
+  addLegend("bottomright", pal = pal, values = ~dataprovider,
+    # title = "dataprovider",
+    opacity = 1)
+```
+
+
+## Find duplicates
+
+Data may be reported twice to Scheldemonitor by different organizations. 
+
+```{r}
+# duplicate rows?
+df %>% 
+  drop_na(value) %>%
+  duplicated() %>% which() %>% length()
+# no
+
+
+# duplicate measurements?
+df %>% 
+  drop_na(value) %>%
+  select(latitude, longitude, depth, datetime, parametername, stationname, value)  %>%
+  duplicated() %>% which() %>% length()
+# yes. 1
+
+```
+
+```{r remove duplicate measurements}
+duplicates <- df %>% 
+  select(latitude, longitude, depth, datetime, parametername, stationname, value)  %>%
+  duplicated() %>% which()
+df_clean <- df[-duplicates,]
+
+# There may be multiple values at same location and time
+df_clean %>% 
+  drop_na(value) %>%
+  select(latitude, longitude, depth, datetime, parametername, stationname)  %>%
+  duplicated() %>% which() %>% length()
+# yes, 54
+
+# See if we can average them
+dupliSamples <- df_clean %>% 
+  drop_na(value) %>%
+  select(latitude, longitude, depth, datetime, parametername, stationname)  %>%
+  duplicated() %>% which()
+
+df_clean %>%
+  group_by(latitude, longitude, depth, datetime, parametername, stationname) %>%
+  summarize(n = n(), mean = mean(value, na.rm = T), sd = sd(value, na.rm = T), .groups = "drop") %>%
+  arrange(-n) %>% head(54)
+
+# Some sd values are very high compared to mean. Still, averaging is necessary to work with the data further
+
+# redefine df_clean without any duplicate measurements
+
+df_clean <- df[-duplicates,] %>%
+  select(latitude, longitude, depth, datetime, parametername, stationname, dataprovider, value) %>%
+  group_by(latitude, longitude, depth, datetime, parametername, stationname, dataprovider) %>%
+  summarize(mean = mean(value, na.rm = T), .groups = "drop")
+
+```
+
+
+There are a few samples with very high sd as compared to the mean (n = 2). 
+
+Without further analysis, it is proposed to work with mean values. 
+
+
+
+## Find matching parameters
+
+Perhaps first aggregate parameters that can be aggregated?
+
+```{r aggregate parameters}
+
+df_clean %>% distinct(parametername)
+
+```
+
+
+Next step harmonizes the data with respect to units. Also, NA and zero values are dropped.
+
+```{r}
+df_harmonized <- df_clean %>%
+  mutate(newParam = case_when(
+    parametername == "Zwevend stof in mg/l in oppervlaktewater" ~ "SPM",
+    parametername == "Zwevend stof in g/l in water" ~ "SPM",
+    parametername == "Lichtextinctie in /m in oppervlaktewater" ~ "E",
+    grepl("Absorptie", parametername) ~ "E",
+    parametername == "Doorzicht in dm in oppervlaktewater" ~ "Secchi"
+  )) %>%
+    mutate(newValue = case_when(
+    parametername == "Zwevend stof in mg/l in oppervlaktewater" ~ mean,
+    parametername == "Zwevend stof in g/l in water" ~ mean/1000,
+    parametername == "Lichtextinctie in /m in oppervlaktewater" ~ mean,
+    grepl("Absorptie", parametername) ~ mean,
+    parametername == "Doorzicht in dm in oppervlaktewater" ~ mean/10
+  )) %>%
+    mutate(newUnit = case_when(
+    parametername == "Zwevend stof in mg/l in oppervlaktewater" ~ "mg/l",
+    parametername == "Zwevend stof in g/l in water" ~ "mg/l",
+    parametername == "Lichtextinctie in /m in oppervlaktewater" ~ "/m",
+    grepl("Absorptie", parametername) ~ "/m",
+    parametername == "Doorzicht in dm in oppervlaktewater" ~ "m"
+  )) %>% 
+  select(-parametername, -mean) %>%
+  filter(newValue > 0 & newValue < 900) %>%
+  drop_na(newValue)
+
+```
+
+Include organic carbon measurements
+
+```{r}
+df_C <- read_delim("data/orgC.csv", delim = ";")
+df_harmonized <- df_harmonized %>% bind_rows(df_C)
+```
+
+
+
+Find parameters that were measured at the same time and location
+
+
+```{r matchParameters}
+# make cross-table
+df_wide <- df_harmonized %>% 
+  unite("paramUnit", newParam, newUnit) %>%
+  spread(key = paramUnit, value = newValue)
+
+View(df_wide)  
+
+```
+
+
+## Geoinformatie toevoegen
+
+```{r}
+df_clean %>% 
+  distinct(latitude, longitude, stationname, dataprovider) %>%
+  filter(latitude < 40)
+```
+
+
+Voor stations Schellebelle moeten nog coordinaten worden toegevoegd
+
+## Additionele informatie
+
+- watersysteem of OMES vak
+- km van de monding?
+
+```{r stationclassification}
+stations <- df_clean %>% 
+  distinct(latitude, longitude, stationname, dataprovider) %>%
+  st_as_sf(coords = c("longitude", "latitude"),  crs = 4326)
+
+OMESvakken <- st_read("data\\OMES_MOSES_gebiedsindeling_Evaluatiemethodiek_RD_new.shp") %>%
+  st_transform(crs = 4326) %>% st_make_valid()
+
+Oosterschelde <- st_read("data\\wl2018_OSv4.geojson")
+
+OosterscheldeStations <- stations %>% st_intersection(Oosterschelde) %>% distinct(stationname) %>% st_drop_geometry() %>%
+  mutate(watersysteem = "Oosterschelde")
+
+scheldeStations <- stations %>% st_intersection(OMESvakken) %>% distinct(stationname, Omessegmen) %>% st_drop_geometry() %>%
+  mutate(watersysteem = "Schelde")
+
+labelledStations <-  OosterscheldeStations %>% 
+  bind_rows(scheldeStations) %>% 
+  right_join(stations)  %>% 
+  select(-geometry) %>% distinct() %>%
+  mutate(watersysteem = case_when(
+    !is.na(watersysteem) ~ watersysteem,
+    is.na(watersysteem) & dataprovider == "RWS - Rijkswaterstaat" ~ "Kustwater"
+  ))
+
+
+
+```
+
+```{r combineStationMeasurements}
+df_wide <- df_wide %>% left_join(labelledStations)
+
+```
+
+
+
+```{r saveHarmonizedData}
+
+save(df_wide, file = "ScheldeSlib.Rdata")
+```
+
